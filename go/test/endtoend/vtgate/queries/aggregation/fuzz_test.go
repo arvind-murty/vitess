@@ -24,8 +24,6 @@ import (
 	"time"
 
 	"golang.org/x/exp/maps"
-
-	"vitess.io/vitess/go/vt/log"
 )
 
 type (
@@ -44,14 +42,14 @@ func TestFuzzAggregations(t *testing.T) {
 	mcmp, closer := start(t)
 	defer closer()
 
-	noOfRows := rand.Intn(20)
+	noOfRows := 3
 	var values []string
 	for i := 0; i < noOfRows; i++ {
 		values = append(values, fmt.Sprintf("(%d, 'name%d', 'value%d', %d)", i, i, i, i))
 	}
 	t1Insert := fmt.Sprintf("insert into t1 (t1_id, name, value, shardKey) values %s;", strings.Join(values, ","))
 	values = nil
-	noOfRows = rand.Intn(20)
+	noOfRows = 2
 	for i := 0; i < noOfRows; i++ {
 		values = append(values, fmt.Sprintf("(%d, %d)", i, i))
 	}
@@ -93,7 +91,7 @@ func TestFuzzAggregations(t *testing.T) {
 		}
 		queryCount++
 	}
-	log.Info("Queries successfully executed: %d", queryCount)
+	fmt.Printf("Queries successfully executed: %d\n", queryCount)
 }
 
 func randomQuery(tables []tableT, maxAggrs, maxGroupBy int) string {
@@ -127,9 +125,9 @@ func randomQuery(tables []tableT, maxAggrs, maxGroupBy int) string {
 		// panic on rand function call if value is 0
 		noOfOrderBy = rand.Intn(len(grouping))
 	}
-	if noOfOrderBy > 0 {
-		noOfOrderBy = 0 // TODO turning on ORDER BY here causes lots of failures to happen
-	}
+	//if noOfOrderBy > 0 {
+	//	noOfOrderBy = 0 // TODO turning on ORDER BY here causes lots of failures to happen
+	//}
 	if noOfOrderBy > 0 {
 		var orderBy []string
 		for noOfOrderBy > 0 {
@@ -143,6 +141,12 @@ func randomQuery(tables []tableT, maxAggrs, maxGroupBy int) string {
 		sel += " order by "
 		sel += strings.Join(orderBy, ", ")
 	}
+
+	if rand.Intn(2) > 0 {
+		limitNum := rand.Intn(20)
+		sel += fmt.Sprintf(" limit %d", limitNum)
+	}
+
 	return sel
 }
 

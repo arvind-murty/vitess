@@ -7,10 +7,12 @@ package vtctldata
 import (
 	binary "encoding/binary"
 	fmt "fmt"
-	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
 	io "io"
 	math "math"
 	bits "math/bits"
+
+	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
+
 	binlogdata "vitess.io/vitess/go/vt/proto/binlogdata"
 	logutil "vitess.io/vitess/go/vt/proto/logutil"
 	mysqlctl "vitess.io/vitess/go/vt/proto/mysqlctl"
