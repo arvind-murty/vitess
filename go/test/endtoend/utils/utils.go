@@ -225,7 +225,7 @@ func WaitForAuthoritative(t *testing.T, vtgateProcess cluster.VtgateProcess, ks,
 	for {
 		select {
 		case <-timeout:
-			return fmt.Errorf("schema tracking didn't mark table t2 as authoritative until timeout")
+			return fmt.Errorf("schema tracking didn't mark table %s as authoritative until timeout", tbl)
 		default:
 			time.Sleep(1 * time.Second)
 			res, err := vtgateProcess.ReadVSchema()
