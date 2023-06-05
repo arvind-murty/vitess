@@ -437,6 +437,28 @@
               "name": "shard_index"
             }
           ]
+        },
+        "dept": {
+          "column_vindexes": [
+            {
+              "column": "deptno",
+              "name": "user_index"
+            }
+          ],
+          "columns": [
+            {
+              "name": "deptno",
+              "type": "INT64"
+            },
+            {
+              "name": "dname",
+              "type": "VARCHAR"
+            },
+            {
+              "name": "loc",
+              "type": "VARCHAR"
+            }
+          ]
         }
       }
     },
