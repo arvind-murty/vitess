@@ -18,15 +18,16 @@ package random
 
 import (
 	"fmt"
-	"github.com/stretchr/testify/require"
-	"golang.org/x/exp/maps"
 	"math/rand"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/require"
+	"golang.org/x/exp/maps"
+
 	"vitess.io/vitess/go/test/endtoend/cluster"
 	"vitess.io/vitess/go/test/endtoend/utils"
-	"vitess.io/vitess/go/vt/log"
 )
 
 type (
@@ -91,10 +92,7 @@ func helperTest(t *testing.T, query string) {
 	})
 }
 
-func TestRandom(t *testing.T) {
-	mcmp, closer := start(t)
-	defer closer()
-
+func TestKnownFailures(t *testing.T) {
 	require.NoError(t, utils.WaitForAuthoritative(t, clusterInstance.VtgateProcess, keyspaceName, "emp"))
 	require.NoError(t, utils.WaitForAuthoritative(t, clusterInstance.VtgateProcess, keyspaceName, "dept"))
 
@@ -139,8 +137,14 @@ func TestRandom(t *testing.T) {
 
 	// succeeds
 	helperTest(t, "select /*vt+ PLANNER=Gen4 */ count(*) from (select count(*) from dept as tbl0 group by tbl0.deptno) as tbl0")
+}
 
-	t.Fatalf("break")
+func TestRandom(t *testing.T) {
+	mcmp, closer := start(t)
+	defer closer()
+
+	require.NoError(t, utils.WaitForAuthoritative(t, clusterInstance.VtgateProcess, keyspaceName, "emp"))
+	require.NoError(t, utils.WaitForAuthoritative(t, clusterInstance.VtgateProcess, keyspaceName, "dept"))
 
 	schema := map[string]tableT{
 		"emp": {name: "emp", columns: []column{
@@ -160,7 +164,7 @@ func TestRandom(t *testing.T) {
 		}},
 	}
 
-	endBy := time.Now().Add(1 * time.Second)
+	endBy := time.Now().Add(10 * time.Second)
 	schemaTables := maps.Values(schema)
 
 	var queryCount int
@@ -172,15 +176,13 @@ func TestRandom(t *testing.T) {
 		}
 		queryCount++
 	}
-	log.Info("Queries successfully executed: %d", queryCount)
-
+	fmt.Printf("Queries successfully executed: %d", queryCount)
 }
 
 func randomQuery(schemaTables []tableT, maxAggrs, maxGroupBy int) string {
 	tables := createTables(schemaTables)
 
-	var randomCol func(tblIdx int) (string, string)
-	randomCol = func(tblIdx int) (string, string) {
+	randomCol := func(tblIdx int) (string, string) {
 		tbl := tables[tblIdx]
 		col := randomEl(tbl.columns)
 		return fmt.Sprintf("tbl%d.%s", tblIdx, col.name), col.typ
@@ -210,15 +212,15 @@ func randomQuery(schemaTables []tableT, maxAggrs, maxGroupBy int) string {
 	}
 	sel += strings.Join(tbls, ", ")
 
-	// join (fails)
-	if rand.Intn(1) > 0 {
-		tables = append(tables, randomEl(schemaTables))
-		join := createPredicates(tables, randomCol, true)
-		sel += " join " + fmt.Sprintf("%s as tbl%d", tables[len(tables)-1].name, len(tables)-1)
-		if len(join) > 0 {
-			sel += " on " + strings.Join(join, " and ")
-		}
-	}
+	//// join (fails)
+	//if rand.Intn(1) > 0 {
+	//	tables = append(tables, randomEl(schemaTables))
+	//	join := createPredicates(tables, randomCol, true)
+	//	sel += " join " + fmt.Sprintf("%s as tbl%d", tables[len(tables)-1].name, len(tables)-1)
+	//	if len(join) > 0 {
+	//		sel += " on " + strings.Join(join, " and ")
+	//	}
+	//}
 
 	if len(predicates) > 0 {
 		sel += " where "
@@ -270,9 +272,6 @@ func randomQuery(schemaTables []tableT, maxAggrs, maxGroupBy int) string {
 		sel = randomQuery(schemaTables, 3, 3)
 	}
 
-	// cleanup
-	schemaTables = schemaTables[:len(schemaTables)-1]
-
 	return sel
 }
 
@@ -280,7 +279,7 @@ func createGroupBy(tables []tableT, maxGB int, randomCol func(tblIdx int) (strin
 	noOfGBs := rand.Intn(maxGB)
 	for i := 0; i < noOfGBs; i++ {
 		var tblIdx int
-		for true {
+		for {
 			tblIdx = rand.Intn(len(tables))
 			if tables[tblIdx].columns != nil {
 				break
@@ -306,7 +305,7 @@ func createAggregations(tables []tableT, maxAggrs int, randomCol func(tblIdx int
 	noOfAggrs := rand.Intn(maxAggrs) + 1
 	for i := 0; i < noOfAggrs; i++ {
 		var tblIdx int
-		for true {
+		for {
 			tblIdx = rand.Intn(len(tables))
 			if tables[tblIdx].columns != nil {
 				break
