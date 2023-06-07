@@ -193,6 +193,8 @@ func tryPushingDownDistinct(in *Distinct) (ops.Operator, *rewrite.ApplyResult, e
 		}
 	case *Distinct:
 		return src, rewrite.NewTree("removed double distinct", src), nil
+	case *Aggregator:
+		return in, rewrite.SameTree, nil
 	}
 
 	cols, err := in.Source.GetColumns()
@@ -221,12 +223,14 @@ func addOrderBysAndGroupBysForAggregations(ctx *plancontext.PlanningContext, roo
 	visitor := func(in ops.Operator, _ semantics.TableSet, isRoot bool) (ops.Operator, *rewrite.ApplyResult, error) {
 		switch in := in.(type) {
 		case *Aggregator:
-			// first we update the incoming columns, so we know about any new columns that have been added
-			columns, err := in.Source.GetColumns()
-			if err != nil {
-				return nil, nil, err
+			if in.Pushed {
+				// first we update the incoming columns, so we know about any new columns that have been added
+				columns, err := in.Source.GetColumns()
+				if err != nil {
+					return nil, nil, err
+				}
+				in.Columns = columns
 			}
-			in.Columns = columns
 
 			requireOrdering, err := needsOrdering(in, ctx)
 			if err != nil {
@@ -796,21 +800,29 @@ outer:
 		if err != nil {
 			return nil, err
 		}
+		addedToCol := false
 		for idx, groupBy := range a.Grouping {
-			if ae == groupBy.aliasedExpr {
-				a.Columns = append(a.Columns, ae)
-				a.Grouping[idx].ColOffset = colIdx
-				continue outer
+			if ctx.SemTable.EqualsExprWithDeps(groupBy.SimplifiedExpr, ae.Expr) {
+				if !addedToCol {
+					a.Columns = append(a.Columns, ae)
+					addedToCol = true
+				}
+				if groupBy.ColOffset < 0 {
+					a.Grouping[idx].ColOffset = colIdx
+				}
 			}
 		}
+		if addedToCol {
+			continue
+		}
 		for idx, aggr := range a.Aggregations {
-			if ae == aggr.Original {
+			if ctx.SemTable.EqualsExprWithDeps(aggr.Original.Expr, ae.Expr) && aggr.ColOffset < 0 {
 				a.Columns = append(a.Columns, ae)
 				a.Aggregations[idx].ColOffset = colIdx
 				continue outer
 			}
 		}
-		return nil, vterrors.VT13001(fmt.Sprintf("Could not find the %v in aggregation in the original query", expr))
+		return nil, vterrors.VT13001(fmt.Sprintf("Could not find the %s in aggregation in the original query", sqlparser.String(ae)))
 	}
 
 	return a, nil
