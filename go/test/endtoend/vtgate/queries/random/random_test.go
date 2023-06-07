@@ -93,42 +93,55 @@ func helperTest(t *testing.T, query string) {
 }
 
 func TestKnownFailures(t *testing.T) {
-	require.NoError(t, utils.WaitForAuthoritative(t, clusterInstance.VtgateProcess, keyspaceName, "emp"))
-	require.NoError(t, utils.WaitForAuthoritative(t, clusterInstance.VtgateProcess, keyspaceName, "dept"))
+	require.NoError(t, utils.WaitForAuthoritative(t, keyspaceName, "emp", clusterInstance.VtgateProcess.ReadVSchema))
+	require.NoError(t, utils.WaitForAuthoritative(t, keyspaceName, "dept", clusterInstance.VtgateProcess.ReadVSchema))
 
 	// logs more stuff
 	//clusterInstance.EnableGeneralLog()
 
 	// succeeds
+	helperTest(t, "select /*vt+ PLANNER=Gen4 */ count(*), count(*), count(*) from dept as tbl0, emp as tbl1 where tbl0.deptno = tbl1.deptno group by tbl1.empno order by tbl1.empno")
+
+	// succeeds
+	helperTest(t, "select /*vt+ PLANNER=Gen4 */ count(tbl0.deptno) from dept as tbl0, emp as tbl1 group by tbl1.job order by tbl1.job limit 3")
+
+	// succeeds
+	helperTest(t, "select /*vt+ PLANNER=Gen4 */ count(*), count(*) from emp as tbl0 group by tbl0.empno order by tbl0.empno")
+
+	// succeeds
 	helperTest(t, "select /*vt+ PLANNER=Gen4 */ distinct count(*), tbl0.loc from dept as tbl0 group by tbl0.loc")
 
-	// unsupported: using aggregation on top of a *operators.Aggregator plan
+	// succeeds
 	helperTest(t, "select /*vt+ PLANNER=Gen4 */ distinct count(*) from dept as tbl0 group by tbl0.loc")
 
-	// mismatched results
+	// succeeds
 	helperTest(t, "select /*vt+ PLANNER=Gen4 */ sum(tbl1.comm) from emp as tbl0, emp as tbl1")
 
-	// cannot compare strings, collation is unknown or unsupported
+	// succeeds
 	helperTest(t, "select /*vt+ PLANNER=Gen4 */ min(tbl0.loc) from dept as tbl0")
 
+	// unsupported
 	// unsupported: in scatter query: aggregation function
 	helperTest(t, "select /*vt+ PLANNER=Gen4 */ avg(tbl0.deptno) from dept as tbl0")
 
-	// EOF (errno 2013) (sqlstate HY000)
+	// succeeds
 	helperTest(t, "select /*vt+ PLANNER=Gen4 */ tbl1.mgr, tbl1.mgr, count(*) from emp as tbl1 group by tbl1.mgr")
 
-	// EOF (same as above)
+	// succeeds
 	helperTest(t, "select /*vt+ PLANNER=Gen4 */ tbl1.mgr, tbl1.mgr, count(*) from emp as tbl0, emp as tbl1 group by tbl1.mgr")
 
-	// mismatched results
+	// succeeds
 	helperTest(t, "select /*vt+ PLANNER=Gen4 */ count(*), count(*), count(tbl0.comm) from emp as tbl0, emp as tbl1 join dept as tbl2")
 
+	// unsupported
 	// unsupported: using aggregation on top of a *planbuilder.orderedAggregate plan
 	helperTest(t, "select /*vt+ PLANNER=Gen4 */ count(*) from (select count(*) from dept as tbl0) as tbl0")
 
+	// unsupported
 	// unsupported: using aggregation on top of a *planbuilder.orderedAggregate plan
 	helperTest(t, "select /*vt+ PLANNER=Gen4 */ count(*), count(*) from (select count(*) from dept as tbl0) as tbl0, dept as tbl1")
 
+	// unsupported
 	// EOF (errno 2013) (sqlstate HY000)
 	helperTest(t, "select /*vt+ PLANNER=Gen4 */ count(*), count(*) from (select count(*) from dept as tbl0 group by tbl0.deptno) as tbl0")
 
@@ -137,14 +150,23 @@ func TestKnownFailures(t *testing.T) {
 
 	// succeeds
 	helperTest(t, "select /*vt+ PLANNER=Gen4 */ count(*) from (select count(*) from dept as tbl0 group by tbl0.deptno) as tbl0")
+
+	// mismatched results (group by + limit)
+	helperTest(t, "select /*vt+ PLANNER=Gen4 */ tbl0.sal, count(tbl0.sal), count(*) from emp as tbl0, emp as tbl1 group by tbl0.sal limit 7")
+
+	// vttablet: rpc error: code = InvalidArgument desc = Can't group on 'count(*)' (errno 1056) (sqlstate 42000) (CallerID: userData1)
+	helperTest(t, "select /*vt+ PLANNER=Gen4 */ distinct count(*) from dept as tbl0 group by tbl0.deptno")
+
+	// unsupported: in scatter query: complex aggregate expression (errno 1235) (sqlstate 42000)
+	helperTest(t, "select /*vt+ PLANNER=Gen4 */ (select count(*) from emp as tbl0) from emp as tbl0")
 }
 
 func TestRandom(t *testing.T) {
 	mcmp, closer := start(t)
 	defer closer()
 
-	require.NoError(t, utils.WaitForAuthoritative(t, clusterInstance.VtgateProcess, keyspaceName, "emp"))
-	require.NoError(t, utils.WaitForAuthoritative(t, clusterInstance.VtgateProcess, keyspaceName, "dept"))
+	require.NoError(t, utils.WaitForAuthoritative(t, keyspaceName, "emp", clusterInstance.VtgateProcess.ReadVSchema))
+	require.NoError(t, utils.WaitForAuthoritative(t, keyspaceName, "dept", clusterInstance.VtgateProcess.ReadVSchema))
 
 	schema := map[string]tableT{
 		"emp": {name: "emp", columns: []column{
@@ -176,7 +198,7 @@ func TestRandom(t *testing.T) {
 		}
 		queryCount++
 	}
-	fmt.Printf("Queries successfully executed: %d", queryCount)
+	fmt.Printf("Queries successfully executed: %d\n", queryCount)
 }
 
 func randomQuery(schemaTables []tableT, maxAggrs, maxGroupBy int) string {
@@ -194,14 +216,38 @@ func randomQuery(schemaTables []tableT, maxAggrs, maxGroupBy int) string {
 	grouping, _ := createGroupBy(tables, maxGroupBy, randomCol)
 	sel := "select /*vt+ PLANNER=Gen4 */ "
 
-	// select distinct (fails)
-	if rand.Intn(2) > 1 {
+	// select distinct (fails with group by bigint)
+	isDistinct := rand.Intn(2) < 1
+	if isDistinct {
 		sel += "distinct "
 	}
 
-	// select the grouping columns (fails)
-	if len(grouping) > 10 {
+	// select the grouping columns
+	if len(grouping) > 0 && isDistinct {
 		sel += strings.Join(grouping, ", ") + ", "
+	}
+
+	// select the ordering columns
+	// we do it this way, so we don't have to do only `only_full_group_by` queries
+	var noOfOrderBy int
+	if len(grouping) > 0 {
+		// panic on rand function call if value is 0 (??)
+		noOfOrderBy = rand.Intn(len(grouping))
+	}
+	var orderBy []string
+	if noOfOrderBy > 0 {
+		for noOfOrderBy > 0 {
+			noOfOrderBy--
+			if rand.Intn(2) == 0 || len(grouping) == 0 {
+				orderBy = append(orderBy, randomEl(aggregates))
+			} else {
+				orderBy = append(orderBy, randomEl(grouping))
+			}
+		}
+
+		if isDistinct || rand.Intn(2) < 1 {
+			sel += strings.Join(orderBy, ", ") + ", "
+		}
 	}
 
 	sel += strings.Join(aggregates, ", ") + " from "
@@ -212,7 +258,7 @@ func randomQuery(schemaTables []tableT, maxAggrs, maxGroupBy int) string {
 	}
 	sel += strings.Join(tbls, ", ")
 
-	//// join (fails)
+	// join
 	//if rand.Intn(1) > 0 {
 	//	tables = append(tables, randomEl(schemaTables))
 	//	join := createPredicates(tables, randomCol, true)
@@ -232,31 +278,13 @@ func randomQuery(schemaTables []tableT, maxAggrs, maxGroupBy int) string {
 		sel += strings.Join(grouping, ", ")
 	}
 
-	// we do it this way, so we don't have to do only `only_full_group_by` queries
-	var noOfOrderBy int
-	if len(grouping) > 0 {
-		// panic on rand function call if value is 0 (??)
-		noOfOrderBy = rand.Intn(len(grouping))
-	}
 	if noOfOrderBy > 0 {
-		noOfOrderBy = 0 // TODO turning on ORDER BY here causes lots of failures to happen
-	}
-	if noOfOrderBy > 0 {
-		var orderBy []string
-		for noOfOrderBy > 0 {
-			noOfOrderBy--
-			if rand.Intn(2) == 0 || len(grouping) == 0 {
-				orderBy = append(orderBy, randomEl(aggregates))
-			} else {
-				orderBy = append(orderBy, randomEl(grouping))
-			}
-		}
 		sel += " order by "
 		sel += strings.Join(orderBy, ", ")
 	}
 
-	// limit (fails)
-	if rand.Intn(2) > 1 {
+	// limit (fails with select grouping columns)
+	if rand.Intn(2) < 0 {
 		limitNum := rand.Intn(20)
 		sel += fmt.Sprintf(" limit %d", limitNum)
 	}
@@ -271,9 +299,6 @@ func randomQuery(schemaTables []tableT, maxAggrs, maxGroupBy int) string {
 	if false {
 		sel = randomQuery(schemaTables, 3, 3)
 	}
-
-	// cleanup
-	schemaTables = schemaTables[:len(schemaTables)-1]
 
 	return sel
 }
