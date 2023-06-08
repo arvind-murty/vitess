@@ -30,6 +30,8 @@ import (
 	"vitess.io/vitess/go/test/endtoend/utils"
 )
 
+const SkipFailures = false
+
 type (
 	column struct {
 		name string
@@ -118,13 +120,6 @@ func TestKnownFailures(t *testing.T) {
 	helperTest(t, "select /*vt+ PLANNER=Gen4 */ sum(tbl1.comm) from emp as tbl0, emp as tbl1")
 
 	// succeeds
-	helperTest(t, "select /*vt+ PLANNER=Gen4 */ min(tbl0.loc) from dept as tbl0")
-
-	// unsupported
-	// unsupported: in scatter query: aggregation function
-	helperTest(t, "select /*vt+ PLANNER=Gen4 */ avg(tbl0.deptno) from dept as tbl0")
-
-	// succeeds
 	helperTest(t, "select /*vt+ PLANNER=Gen4 */ tbl1.mgr, tbl1.mgr, count(*) from emp as tbl1 group by tbl1.mgr")
 
 	// succeeds
@@ -132,6 +127,50 @@ func TestKnownFailures(t *testing.T) {
 
 	// succeeds
 	helperTest(t, "select /*vt+ PLANNER=Gen4 */ count(*), count(*), count(tbl0.comm) from emp as tbl0, emp as tbl1 join dept as tbl2")
+
+	// succeeds
+	helperTest(t, "select /*vt+ PLANNER=Gen4 */ count(*), count(*) from (select count(*) from dept as tbl0 group by tbl0.deptno) as tbl0, dept as tbl1")
+
+	// succeeds
+	helperTest(t, "select /*vt+ PLANNER=Gen4 */ count(*) from (select count(*) from dept as tbl0 group by tbl0.deptno) as tbl0")
+
+	// succeeds
+	helperTest(t, "select /*vt+ PLANNER=Gen4 */ min(tbl0.loc) from dept as tbl0")
+
+	// cannot compare strings, collation is unknown or unsupported (collation ID: 0) (errno 1105) (sqlstate HY000)
+	helperTest(t, "select /*vt+ PLANNER=Gen4 */ tbl1.empno, max(tbl1.job) from dept as tbl0, emp as tbl1 group by tbl1.empno")
+
+	// cannot compare strings, collation is unknown or unsupported (collation ID: 0) (errno 1105) (sqlstate HY000)
+	helperTest(t, "select /*vt+ PLANNER=Gen4 */ tbl1.ename, max(tbl0.comm) from emp as tbl0, emp as tbl1 group by tbl1.ename")
+
+	// EOF (errno 2013) (sqlstate HY000) at first, then
+	// cannot compare strings, collation is unknown or unsupported (collation ID: 0) (errno 1105) (sqlstate HY000)
+	helperTest(t, "select /*vt+ PLANNER=Gen4 */ tbl0.dname, tbl0.dname, min(tbl0.deptno) from dept as tbl0, dept as tbl1 group by tbl0.dname, tbl0.dname")
+
+	// mismatched results
+	helperTest(t, "select /*vt+ PLANNER=Gen4 */ tbl0.dname, min(tbl1.deptno) from dept as tbl0, dept as tbl1 group by tbl0.dname, tbl1.dname")
+
+	// mismatched results (group by + limit)
+	helperTest(t, "select /*vt+ PLANNER=Gen4 */ count(*) from emp as tbl0 group by tbl0.sal limit 7")
+
+	// vttablet: rpc error: code = InvalidArgument desc = Can't group on 'count(*)' (errno 1056) (sqlstate 42000) (CallerID: userData1)
+	helperTest(t, "select /*vt+ PLANNER=Gen4 */ distinct count(*) from dept as tbl0 group by tbl0.deptno")
+
+	// unsupported: column collation not known for the function: max(tbl0.hiredate) (errno 1235) (sqlstate 42000)
+	helperTest(t, "select /*vt+ PLANNER=Gen4 */ max(tbl0.hiredate) from emp as tbl0")
+
+	// EOF (errno 2013) (sqlstate HY000)
+	helperTest(t, "select /*vt+ PLANNER=Gen4 */ count(*) from dept as tbl0, (select /*vt+ PLANNER=Gen4 */ count(*) from emp as tbl0, emp as tbl1 limit 18) as tbl1")
+
+	// push projection does not yet support: *planbuilder.memorySort (errno 1815) (sqlstate HY000)
+	helperTest(t, "select /*vt+ PLANNER=Gen4 */ count(*) from dept as tbl1 join (select count(*) from emp as tbl0, dept as tbl1 group by tbl1.loc) as tbl2")
+
+	// unsupported: in scatter query: complex aggregate expression (errno 1235) (sqlstate 42000)
+	helperTest(t, "select /*vt+ PLANNER=Gen4 */ (select count(*) from emp as tbl0) from emp as tbl0")
+
+	// unsupported
+	// unsupported: in scatter query: aggregation function
+	helperTest(t, "select /*vt+ PLANNER=Gen4 */ avg(tbl0.deptno) from dept as tbl0")
 
 	// unsupported
 	// unsupported: using aggregation on top of a *planbuilder.orderedAggregate plan
@@ -144,21 +183,6 @@ func TestKnownFailures(t *testing.T) {
 	// unsupported
 	// EOF (errno 2013) (sqlstate HY000)
 	helperTest(t, "select /*vt+ PLANNER=Gen4 */ count(*), count(*) from (select count(*) from dept as tbl0 group by tbl0.deptno) as tbl0")
-
-	// succeeds
-	helperTest(t, "select /*vt+ PLANNER=Gen4 */ count(*), count(*) from (select count(*) from dept as tbl0 group by tbl0.deptno) as tbl0, dept as tbl1")
-
-	// succeeds
-	helperTest(t, "select /*vt+ PLANNER=Gen4 */ count(*) from (select count(*) from dept as tbl0 group by tbl0.deptno) as tbl0")
-
-	// mismatched results (group by + limit)
-	helperTest(t, "select /*vt+ PLANNER=Gen4 */ tbl0.sal, count(tbl0.sal), count(*) from emp as tbl0, emp as tbl1 group by tbl0.sal limit 7")
-
-	// vttablet: rpc error: code = InvalidArgument desc = Can't group on 'count(*)' (errno 1056) (sqlstate 42000) (CallerID: userData1)
-	helperTest(t, "select /*vt+ PLANNER=Gen4 */ distinct count(*) from dept as tbl0 group by tbl0.deptno")
-
-	// unsupported: in scatter query: complex aggregate expression (errno 1235) (sqlstate 42000)
-	helperTest(t, "select /*vt+ PLANNER=Gen4 */ (select count(*) from emp as tbl0) from emp as tbl0")
 }
 
 func TestRandom(t *testing.T) {
@@ -192,9 +216,13 @@ func TestRandom(t *testing.T) {
 	var queryCount int
 	for time.Now().Before(endBy) || t.Failed() {
 		query := randomQuery(schemaTables, 3, 3)
-		mcmp.Exec(query)
-		if t.Failed() {
+		_, vtErr := mcmp.ExecAllowAndCompareError(query)
+		// t.Failed() will become true once and subsequently print every query
+		// this instead assumes all queries are valid mysql queries
+		if vtErr != nil {
 			fmt.Println(query)
+			closer()
+			mcmp, _ = start(t)
 		}
 		queryCount++
 	}
@@ -210,7 +238,7 @@ func randomQuery(schemaTables []tableT, maxAggrs, maxGroupBy int) string {
 		return fmt.Sprintf("tbl%d.%s", tblIdx, col.name), col.typ
 	}
 
-	isDerived := rand.Intn(10) < 0
+	isDerived := rand.Intn(10) < 1 && SkipFailures
 	aggregates, _ := createAggregations(tables, maxAggrs, randomCol, isDerived)
 	predicates := createPredicates(tables, randomCol, false)
 	grouping, _ := createGroupBy(tables, maxGroupBy, randomCol)
@@ -223,15 +251,15 @@ func randomQuery(schemaTables []tableT, maxAggrs, maxGroupBy int) string {
 	}
 
 	// select the grouping columns
-	if len(grouping) > 0 && isDistinct {
+	if len(grouping) > 0 && rand.Intn(2) < 1 && (!isDistinct || SkipFailures) {
 		sel += strings.Join(grouping, ", ") + ", "
 	}
 
 	// select the ordering columns
 	// we do it this way, so we don't have to do only `only_full_group_by` queries
 	var noOfOrderBy int
-	if len(grouping) > 0 {
-		// panic on rand function call if value is 0 (??)
+	if len(grouping) > 0 && (!isDistinct || SkipFailures) {
+		// panic on rand function call if value is 0
 		noOfOrderBy = rand.Intn(len(grouping))
 	}
 	var orderBy []string
@@ -245,7 +273,7 @@ func randomQuery(schemaTables []tableT, maxAggrs, maxGroupBy int) string {
 			}
 		}
 
-		if isDistinct || rand.Intn(2) < 1 {
+		if rand.Intn(2) < 1 {
 			sel += strings.Join(orderBy, ", ") + ", "
 		}
 	}
@@ -259,21 +287,21 @@ func randomQuery(schemaTables []tableT, maxAggrs, maxGroupBy int) string {
 	sel += strings.Join(tbls, ", ")
 
 	// join
-	//if rand.Intn(1) > 0 {
-	//	tables = append(tables, randomEl(schemaTables))
-	//	join := createPredicates(tables, randomCol, true)
-	//	sel += " join " + fmt.Sprintf("%s as tbl%d", tables[len(tables)-1].name, len(tables)-1)
-	//	if len(join) > 0 {
-	//		sel += " on " + strings.Join(join, " and ")
-	//	}
-	//}
+	if rand.Intn(2) < 1 {
+		tables = append(tables, randomEl(schemaTables))
+		join := createPredicates(tables, randomCol, true)
+		sel += " join " + fmt.Sprintf("%s as tbl%d", tables[len(tables)-1].name, len(tables)-1)
+		if len(join) > 0 {
+			sel += " on " + strings.Join(join, " and ")
+		}
+	}
 
 	if len(predicates) > 0 {
 		sel += " where "
 		sel += strings.Join(predicates, " and ")
 	}
 
-	if len(grouping) > 0 {
+	if len(grouping) > 0 && (!isDistinct || SkipFailures) {
 		sel += " group by "
 		sel += strings.Join(grouping, ", ")
 	}
@@ -284,19 +312,20 @@ func randomQuery(schemaTables []tableT, maxAggrs, maxGroupBy int) string {
 	}
 
 	// limit (fails with select grouping columns)
-	if rand.Intn(2) < 0 {
+	if rand.Intn(2) < 1 && SkipFailures {
 		limitNum := rand.Intn(20)
 		sel += fmt.Sprintf(" limit %d", limitNum)
 	}
 
 	// add generated query to schemaTables
+	// TODO: make columns not nil but prevent aggregation on said columns
 	schemaTables = append(schemaTables, tableT{
 		name:    "(" + sel + ")",
 		columns: nil,
 	})
 
 	// derived tables (fails)
-	if false {
+	if isDerived {
 		sel = randomQuery(schemaTables, 3, 3)
 	}
 
@@ -312,6 +341,7 @@ func createGroupBy(tables []tableT, maxGB int, randomCol func(tblIdx int) (strin
 			if tables[tblIdx].columns != nil {
 				break
 			}
+			// fmt.Printf("group by tables:\n%v\n tblIdx: %d\n", tables, tblIdx)
 		}
 		col, typ := randomCol(tblIdx)
 		grouping = append(grouping, col)
@@ -324,10 +354,10 @@ func createAggregations(tables []tableT, maxAggrs int, randomCol func(tblIdx int
 	aggregations := []func(string) string{
 		func(_ string) string { return "count(*)" },
 		func(e string) string { return fmt.Sprintf("count(%s)", e) },
-		//func (e string) string { return fmt.Sprintf("sum(%s)", e) },
+		func(e string) string { return fmt.Sprintf("sum(%s)", e) },
 		//func(e string) string { return fmt.Sprintf("avg(%s)", e) },
-		//func(e string) string { return fmt.Sprintf("min(%s)", e) },
-		//func(e string) string { return fmt.Sprintf("max(%s)", e) },
+		func(e string) string { return fmt.Sprintf("min(%s)", e) },
+		func(e string) string { return fmt.Sprintf("max(%s)", e) },
 	}
 
 	noOfAggrs := rand.Intn(maxAggrs) + 1
@@ -338,10 +368,13 @@ func createAggregations(tables []tableT, maxAggrs int, randomCol func(tblIdx int
 			if tables[tblIdx].columns != nil {
 				break
 			}
+			// fmt.Printf("aggregation tables:\n%v\n tblIdx: %d\n", tables, tblIdx)
 		}
 		e, typ := randomCol(tblIdx)
 		newAggregate := randomEl(aggregations)(e)
 		addAggr := true
+
+		// derived tables do not allow duplicate columns
 		if isDerived {
 			for _, aggr := range aggregates {
 				if newAggregate == aggr {
@@ -349,6 +382,12 @@ func createAggregations(tables []tableT, maxAggrs int, randomCol func(tblIdx int
 					break
 				}
 			}
+		}
+		// collation unsupported on temporal types
+		// collation somewhat unsupported on varchar and bigint with group by
+		if (newAggregate == fmt.Sprintf("max(%s)", e) || newAggregate == fmt.Sprintf("min(%s)", e)) && (typ != "bigint" || !SkipFailures) && (typ != "varchar" || !SkipFailures) {
+			i--
+			continue
 		}
 		if addAggr {
 			aggregates = append(aggregates, newAggregate)
@@ -363,9 +402,11 @@ func createAggregations(tables []tableT, maxAggrs int, randomCol func(tblIdx int
 }
 
 func createTables(schemaTables []tableT) []tableT {
-	noOfTables := rand.Intn(2) + 1
 	var tables []tableT
+	// add at least one of original emp/dept tables for now because derived tables have nil columns
+	tables = append(tables, schemaTables[rand.Intn(2)])
 
+	noOfTables := rand.Intn(len(schemaTables))
 	for i := 0; i < noOfTables; i++ {
 		tables = append(tables, randomEl(schemaTables))
 	}
