@@ -224,6 +224,7 @@ func TestRandom(t *testing.T) {
 	endBy := time.Now().Add(1 * time.Second)
 
 	var queryCount int
+	// continue testing after an error if and only if testFailingQueries is true
 	for time.Now().Before(endBy) && (!t.Failed() || testFailingQueries) {
 		query := sqlparser.String(randomQuery(schemaTables, 3, 3))
 		_, vtErr := mcmp.ExecAllowAndCompareError(query)
